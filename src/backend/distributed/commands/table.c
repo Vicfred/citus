@@ -1355,6 +1355,8 @@ InterShardDDLTaskList(Oid leftRelationId, Oid rightRelationId,
 	/* lock metadata before getting placement lists */
 	LockShardListMetadata(leftShardList, ShareLock);
 
+	Assert(list_length(leftShardList) == list_length(rightShardList));
+
 	forboth(leftShardCell, leftShardList, rightShardCell, rightShardList)
 	{
 		ShardInterval *leftShardInterval = (ShardInterval *) lfirst(leftShardCell);

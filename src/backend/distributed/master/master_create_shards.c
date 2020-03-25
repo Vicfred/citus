@@ -330,12 +330,6 @@ CreateColocatedShards(Oid targetRelationId, Oid sourceRelationId, bool
 void
 CreateReferenceTableShard(Oid distributedTableId)
 {
-	int workerStartIndex = 0;
-	text *shardMinValue = NULL;
-	text *shardMaxValue = NULL;
-	bool useExclusiveConnection = false;
-	bool colocatedShard = false;
-
 	/*
 	 * In contrast to append/range partitioned tables it makes more sense to
 	 * require ownership privileges - shards for reference tables are
@@ -372,12 +366,19 @@ CreateReferenceTableShard(Oid distributedTableId)
 	/* get the next shard id */
 	uint64 shardId = GetNextShardId();
 
+	text *shardMinValue = NULL;
+	text *shardMaxValue = NULL;
+
 	InsertShardRow(distributedTableId, shardId, shardStorageType, shardMinValue,
 				   shardMaxValue);
 
+	int workerStartIndex = 0;
 	List *insertedShardPlacements = InsertShardPlacementRows(distributedTableId, shardId,
 															 nodeList, workerStartIndex,
 															 replicationFactor);
+
+	bool useExclusiveConnection = false;
+	bool colocatedShard = false;
 
 	CreateShardsOnWorkers(distributedTableId, insertedShardPlacements,
 						  useExclusiveConnection, colocatedShard);
