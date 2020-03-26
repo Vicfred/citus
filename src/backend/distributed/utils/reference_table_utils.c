@@ -176,10 +176,8 @@ WorkersWithoutReferenceTablePlacement(uint64 shardId)
 	{
 		char *nodeName = workerNode->workerName;
 		uint32 nodePort = workerNode->workerPort;
-		bool missingWorkerOk = true;
 		ShardPlacement *targetPlacement = SearchShardPlacementInList(shardPlacementList,
-																	 nodeName, nodePort,
-																	 missingWorkerOk);
+																	 nodeName, nodePort);
 		if (targetPlacement == NULL)
 		{
 			workersWithoutPlacements = lappend(workersWithoutPlacements, workerNode);
