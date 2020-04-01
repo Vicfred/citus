@@ -323,13 +323,15 @@ CreateColocatedShards(Oid targetRelationId, Oid sourceRelationId, bool
 
 
 /*
- * CreateReferenceTableShard creates a single shard for the given
+ * CreateSingleShardTableShard creates a single shard for the given
  * distributedTableId. The created shard does not have min/max values.
  * Also, the shard is replicated to the all active nodes in the cluster.
  */
 void
-CreateReferenceTableShard(Oid distributedTableId)
+CreateSingleShardTableShard(Oid distributedTableId, char distributionMethod)
 {
+	Assert(IsSingleShardDistribution(distributionMethod));
+
 	/*
 	 * In contrast to append/range partitioned tables it makes more sense to
 	 * require ownership privileges - shards for reference tables are
@@ -354,14 +356,27 @@ CreateReferenceTableShard(Oid distributedTableId)
 							   tableName)));
 	}
 
-	/*
-	 * load and sort the worker node list for deterministic placements
-	 * create_reference_table has already acquired pg_dist_node lock
-	 */
-	List *nodeList = ReferenceTablePlacementNodeList(ShareLock);
-	nodeList = SortList(nodeList, CompareWorkerNodes);
+	List *nodeList = NIL;
+	int replicationFactor = 0;
 
-	int replicationFactor = ReferenceTableReplicationFactor();
+	if (distributionMethod == DISTRIBUTE_BY_NONE)
+	{
+		/*
+		 * load and sort the worker node list for deterministic placements
+		 * create_reference_table has already acquired pg_dist_node lock
+		 */
+		nodeList = ReferenceTablePlacementNodeList(ShareLock);
+		nodeList = SortList(nodeList, CompareWorkerNodes);
+
+		replicationFactor = ReferenceTableReplicationFactor();
+	}
+	else if (distributionMethod == COORDINATOR_TABLE)
+	{
+		nodeList = CoordinatorTablePlacementNodeList(ShareLock);
+
+		/* would always have a single placement */
+		replicationFactor = 1;
+	}
 
 	/* get the next shard id */
 	uint64 shardId = GetNextShardId();

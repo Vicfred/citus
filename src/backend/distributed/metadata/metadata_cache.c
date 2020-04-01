@@ -1236,7 +1236,7 @@ BuildCachedShardList(CitusTableCacheEntry *cacheEntry)
 	}
 
 	/* reference tables has a single shard which is not initialized */
-	if (cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE)
+	if (IsSingleShardDistribution(cacheEntry->partitionMethod))
 	{
 		cacheEntry->hasUninitializedShardInterval = true;
 		cacheEntry->hasOverlappingShardInterval = true;
@@ -3754,6 +3754,11 @@ GetPartitionTypeInputInfo(char *partitionKeyString, char partitionMethod,
 		}
 
 		case DISTRIBUTE_BY_NONE:
+		{
+			break;
+		}
+
+		case COORDINATOR_TABLE:
 		{
 			break;
 		}

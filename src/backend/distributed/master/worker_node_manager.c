@@ -404,12 +404,12 @@ NodeIsPrimaryWorker(WorkerNode *node)
 
 
 /*
- * CanUseCoordinatorLocalTablesWithReferenceTables returns true if we
- * are allowed to use coordinator local tables with reference tables
- * for joining them.
+ * CanUseCoordinatorLocalTablesWithSingleShardTables returns true if we are
+ * allowed to use coordinator local tables with reference tables for joining
+ * them.
  */
 bool
-CanUseCoordinatorLocalTablesWithReferenceTables(void)
+CanUseCoordinatorLocalTablesWithSingleShardTables(void)
 {
 	/*
 	 * Using local tables of coordinator with reference tables is only allowed
@@ -462,6 +462,24 @@ ReferenceTablePlacementNodeList(LOCKMODE lockMode)
 {
 	EnsureModificationsCanRun();
 	return FilterActiveNodeListFunc(lockMode, NodeIsPrimary);
+}
+
+
+/*
+ * CoordinatorTablePlacementNodeList returns a single element list containing
+ * the cooridinator node.
+ */
+List *
+CoordinatorTablePlacementNodeList(LOCKMODE lockMode)
+{
+	EnsureModificationsCanRun();
+
+	WorkerNode *coordinatorNode = LookupNodeForGroup(COORDINATOR_GROUP_ID);
+
+	WorkerNode *workerNodeCopy = palloc0(sizeof(WorkerNode));
+	*workerNodeCopy = *coordinatorNode;
+
+	return list_make1(workerNodeCopy);
 }
 
 
