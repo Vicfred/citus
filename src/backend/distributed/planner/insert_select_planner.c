@@ -112,7 +112,8 @@ InsertSelectIntoLocalTable(Query *query)
 	if (insertSelectQuery)
 	{
 		RangeTblEntry *insertRte = ExtractResultRelationRTE(query);
-		if (!IsCitusTable(insertRte->relid))
+		if (!IsCitusTable(insertRte->relid) || PartitionMethod(insertRte->relid) ==
+			COORDINATOR_TABLE)
 		{
 			return true;
 		}

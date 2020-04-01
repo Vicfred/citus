@@ -122,9 +122,9 @@ static void PopPlannerRestrictionContext(void);
 static void ResetPlannerRestrictionContext(
 	PlannerRestrictionContext *plannerRestrictionContext);
 static bool HasUnresolvedExternParamsWalker(Node *expression, ParamListInfo boundParams);
-static bool IsLocalReferenceTableJoin(Query *parse, List *rangeTableList);
+static bool CanSkipDistributedPlanner(Query *parse, List *rangeTableList);
 static bool QueryIsNotSimpleSelect(Node *node);
-static bool UpdateReferenceTablesWithShard(Node *node, void *context);
+static bool UpdateSingleShardTablesWithShard(Node *node, void *context);
 static PlannedStmt * PlanFastPathDistributedStmt(DistributedPlanningContext *planContext,
 												 Node *distributionKeyValue);
 static PlannedStmt * PlanDistributedStmt(DistributedPlanningContext *planContext,
@@ -158,7 +158,11 @@ distributed_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	}
 	else if (CitusHasBeenLoaded())
 	{
-		if (IsLocalReferenceTableJoin(parse, rangeTableList))
+		/* regardless of we use distributed planner, replace coordinator tables with shards */
+		char replaceCoordinatorTable = COORDINATOR_TABLE;
+		UpdateSingleShardTablesWithShard((Node *) parse, &replaceCoordinatorTable);
+
+		if (CanSkipDistributedPlanner(parse, rangeTableList))
 		{
 			/*
 			 * For joins between reference tables and local tables, we replace
@@ -166,7 +170,9 @@ distributed_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			 * we can use the standard_planner for planning it locally.
 			 */
 			needsDistributedPlanning = false;
-			UpdateReferenceTablesWithShard((Node *) parse, NULL);
+			
+			char replaceReferenceTable = DISTRIBUTE_BY_NONE;
+			UpdateSingleShardTablesWithShard((Node *) parse, &replaceReferenceTable);
 		}
 		else
 		{
@@ -199,7 +205,7 @@ distributed_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		if (InsertSelectIntoLocalTable(parse))
 		{
 			ereport(ERROR, (errmsg("cannot INSERT rows from a distributed query into a "
-								   "local table"),
+								   "local table or a coordinator table"),
 							errhint("Consider using CREATE TEMPORARY TABLE tmp AS "
 									"SELECT ... and inserting from the temporary "
 									"table.")));
@@ -2341,26 +2347,20 @@ HasUnresolvedExternParamsWalker(Node *expression, ParamListInfo boundParams)
 
 
 /*
- * IsLocalReferenceTableJoin returns if the given query is a join between
+ * CanSkipDistributedPlanner returns if the given query is a join between
  * reference tables and local tables.
  */
 static bool
-IsLocalReferenceTableJoin(Query *parse, List *rangeTableList)
+CanSkipDistributedPlanner(Query *parse, List *rangeTableList)
 {
-	bool hasReferenceTable = false;
-	bool hasLocalTable = false;
+	bool hasOnlyLocalTable = true;
 	ListCell *rangeTableCell = false;
 
 	/*
 	 * Check if we are in the coordinator and coordinator can have reference
 	 * table placements
 	 */
-	if (!CanUseCoordinatorLocalTablesWithReferenceTables())
-	{
-		return false;
-	}
-
-	if (FindNodeCheck((Node *) parse, QueryIsNotSimpleSelect))
+	if (!CanUseCoordinatorLocalTablesWithSingleShardTables())
 	{
 		return false;
 	}
@@ -2405,23 +2405,29 @@ IsLocalReferenceTableJoin(Query *parse, List *rangeTableList)
 
 		if (!IsCitusTable(rangeTableEntry->relid))
 		{
-			hasLocalTable = true;
 			continue;
 		}
 
-		CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(
-			rangeTableEntry->relid);
-		if (cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE)
-		{
-			hasReferenceTable = true;
-		}
-		else
+		if (!IsSingleShardDistribution(PartitionMethod(rangeTableEntry->relid)))
 		{
 			return false;
 		}
+		else
+		{
+			hasOnlyLocalTable = false;
+		}
 	}
 
-	return hasLocalTable && hasReferenceTable;
+	/* at this point, we do not have a distributed table in query */
+	
+	if (hasOnlyLocalTable)
+	{
+		return true;
+	}
+	
+	bool queryIsNotSimpleSelect = FindNodeCheck((Node*) parse, QueryIsNotSimpleSelect);
+
+	return !queryIsNotSimpleSelect;
 }
 
 
@@ -2443,12 +2449,19 @@ QueryIsNotSimpleSelect(Node *node)
 
 
 /*
- * UpdateReferenceTablesWithShard recursively replaces the reference table names
+ * UpdateSingleShardTablesWithShard recursively replaces the reference table names
  * in the given query with the shard table names.
  */
 static bool
-UpdateReferenceTablesWithShard(Node *node, void *context)
+UpdateSingleShardTablesWithShard(Node *node, void *context)
 {
+	Assert(context != NULL);
+
+	/* get citus table type to be replaced */
+	char partitionMethod = *((char*) context);
+
+	Assert(IsSingleShardDistribution(partitionMethod));
+
 	if (node == NULL)
 	{
 		return false;
@@ -2457,14 +2470,14 @@ UpdateReferenceTablesWithShard(Node *node, void *context)
 	/* want to look at all RTEs, even in subqueries, CTEs and such */
 	if (IsA(node, Query))
 	{
-		return query_tree_walker((Query *) node, UpdateReferenceTablesWithShard,
-								 NULL, QTW_EXAMINE_RTES_BEFORE);
+		return query_tree_walker((Query *) node, UpdateSingleShardTablesWithShard,
+								 context, QTW_EXAMINE_RTES_BEFORE);
 	}
 
 	if (!IsA(node, RangeTblEntry))
 	{
-		return expression_tree_walker(node, UpdateReferenceTablesWithShard,
-									  NULL);
+		return expression_tree_walker(node, UpdateSingleShardTablesWithShard,
+									  context);
 	}
 
 	RangeTblEntry *newRte = (RangeTblEntry *) node;
@@ -2481,7 +2494,7 @@ UpdateReferenceTablesWithShard(Node *node, void *context)
 	}
 
 	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(relationId);
-	if (cacheEntry->partitionMethod != DISTRIBUTE_BY_NONE)
+	if (cacheEntry->partitionMethod != partitionMethod)
 	{
 		return false;
 	}
@@ -2499,7 +2512,9 @@ UpdateReferenceTablesWithShard(Node *node, void *context)
 	 * Parser locks relations in addRangeTableEntry(). So we should lock the
 	 * modified ones too.
 	 */
-	LockRelationOid(newRte->relid, AccessShareLock);
+
+	/* obvious */
+	LockRelationOid(newRte->relid, newRte->rellockmode);
 
 	return false;
 }
