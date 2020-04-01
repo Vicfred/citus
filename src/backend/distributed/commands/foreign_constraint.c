@@ -176,6 +176,20 @@ ErrorIfUnsupportedForeignConstraintExists(Relation referencingRelation,
 
 		if (foreignKeyToLocalTable)
 		{
+			if (referencingDistMethod == COORDINATOR_TABLE)
+			{
+				/*
+				 * We support foreign keys between from single placement tables
+				 * to local tables. No more checks are necessary.
+				 */
+				heapTuple = systable_getnext(scanDescriptor);
+				continue;
+			}
+
+			/*
+			 * We do not allow foreign keys from citus tables to local tables
+			 * (except for single placement table).
+			 */
 			ereport(ERROR, (errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 							errmsg("cannot create foreign key constraint"),
 							errdetail("Referenced table must be a distributed table"

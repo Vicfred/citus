@@ -875,7 +875,7 @@ ErrorIfUnsupportedConstraint(Relation relation, char distributionMethod,
 	 * given that they only consist of a single shard and we can simply rely on
 	 * Postgres.
 	 */
-	if (distributionMethod == DISTRIBUTE_BY_NONE)
+	if (IsSingleShardDistribution(distributionMethod))
 	{
 		return;
 	}
